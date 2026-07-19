@@ -127,37 +127,41 @@ function getCategory(title) {
 async function init(cfg) {}
 
 async function home(filter) {
-    // 四个固定分类
+    // 获取首页比赛列表
+    try {
+        const r = await req(host + '/worldcup26', { headers });
+        if (r && r.content) {
+            const state = extractState(r.content);
+            if (state && state.worldCupMatch && state.worldCupMatch.matches) {
+                const matches = state.worldCupMatch.matches;
+                const classes = matches.map(match => ({
+                    type_id: match.matchId || '',
+                    type_name: (match.homeTeamName || '') + ' vs ' + (match.awayTeamName || '')
+                }));
+
+                return JSON.stringify({ class: classes });
+            }
+        }
+    } catch(e) {}
+
+    // 默认返回
     return JSON.stringify({
         class: [
-            { type_id: 'replay', type_name: '全场回放' },
-            { type_id: 'highlight', type_name: '全场集锦' },
-            { type_id: 'report', type_name: '战报' },
-            { type_id: 'high', type_name: '高光时刻' }
+            { type_id: '4459814', type_name: '阿根廷 vs 巴西' },
+            { type_id: '4459813', type_name: '法国 vs 西班牙' }
         ]
     });
 }
 
 async function homeVod() {
-    // 返回 4459814 作为入口
-    return JSON.stringify({
-        list: [
-            {
-                vod_id: '4459814',
-                vod_name: '世界杯 4459814',
-                vod_pic: 'https://via.placeholder.com/300x400?text=World+Cup+4459814',
-                vod_remarks: '选择分类查看',
-                vod_content: '支持：全场回放、全场集锦、战报、高光时刻'
-            }
-        ]
-    });
+    return JSON.stringify({ list: [] });
 }
 
 async function category(tid, pg, filter, extend) {
-    // tid 是分类ID: replay, highlight, report, high
-    // 返回该分类下的视频列表
+    // tid 是比赛ID，如 4459814
+    // 返回该比赛下的视频分类列表
 
-    const matchUrl = host + '/worldcup26/match/4459814?wcup_source=web_main_venue_page';
+    const matchUrl = host + '/worldcup26/match/' + tid + '?wcup_source=web_main_venue_page';
 
     try {
         const r = await req(matchUrl, { headers });
@@ -173,72 +177,80 @@ async function category(tid, pg, filter, extend) {
         const matchBase = state.worldCupMatch?.matchBase || {};
         const matchInfo = state.worldCupMatch?.matchInfo || {};
 
+        const homeTeam = matchBase.homeTeamName || '未知';
+        const awayTeam = matchBase.awayTeamName || '未知';
+        const score = (matchBase.homeScore || '0') + ' - ' + (matchBase.awayScore || '0');
+
         let videos = [];
 
-        if (tid === 'replay') {
-            // 全场回放 - 从 liveInfo.replayNoteId
-            const liveInfo = matchBase.liveInfo || {};
-            if (liveInfo.replayNoteId) {
+        // 1. 全场回放
+        const liveInfo = matchBase.liveInfo || {};
+        if (liveInfo.replayNoteId) {
+            videos.push({
+                vod_id: tid + '_replay_' + liveInfo.replayNoteId,
+                vod_name: '【全场回放】官方回放',
+                vod_pic: matchBase.homeTeamLogo || '',
+                vod_remarks: '官方',
+                vod_content: homeTeam + ' ' + score + ' ' + awayTeam
+            });
+        }
+
+        // 2. 全场集锦 - 从 reportList 和 highList 筛选
+        const reportList = matchInfo.reportList || [];
+        for (let i = 0; i < reportList.length; i++) {
+            const item = reportList[i];
+            if (item.type === 'video' && getCategory(item.title || '') === '全场集锦') {
                 videos.push({
-                    vod_id: '4459814_replay_' + liveInfo.replayNoteId,
-                    vod_name: '官方全场回放',
-                    vod_pic: matchBase.homeTeamLogo || '',
-                    vod_remarks: '官方回放',
-                    vod_content: '全场回放视频'
-                });
-            }
-        } else if (tid === 'highlight') {
-            // 全场集锦 - 从 reportList 和 highList 中筛选标题含"集锦"的
-            const allItems = [];
-
-            const reportList = matchInfo.reportList || [];
-            for (const item of reportList) {
-                if (item.type === 'video' && getCategory(item.title || '') === '全场集锦') {
-                    allItems.push(item);
-                }
-            }
-
-            const highList = matchInfo.highList || [];
-            for (const item of highList) {
-                if (item.type === 'video' && getCategory(item.title || '') === '全场集锦') {
-                    allItems.push(item);
-                }
-            }
-
-            for (let i = 0; i < allItems.length; i++) {
-                const item = allItems[i];
-                videos.push({
-                    vod_id: '4459814_highlight_' + item.noteId,
-                    vod_name: item.title || '集锦' + (i + 1),
+                    vod_id: tid + '_highlight_' + item.noteId,
+                    vod_name: '【全场集锦】' + (item.title || '集锦' + (i + 1)),
                     vod_pic: item.cover || '',
                     vod_remarks: (item.nickname || '') + ' | ' + (item.likes || 0) + '赞',
                     vod_content: item.title || ''
                 });
             }
-        } else if (tid === 'report') {
-            // 战报 - reportList 中所有 video 类型
-            const reportList = matchInfo.reportList || [];
-            for (let i = 0; i < reportList.length; i++) {
-                const item = reportList[i];
-                if (item.type === 'video') {
+        }
+
+        const highList = matchInfo.highList || [];
+        for (let i = 0; i < highList.length; i++) {
+            const item = highList[i];
+            if (item.type === 'video' && getCategory(item.title || '') === '全场集锦') {
+                // 避免重复
+                const existing = videos.find(v => v.vod_id.indexOf(item.noteId) !== -1);
+                if (!existing) {
                     videos.push({
-                        vod_id: '4459814_report_' + item.noteId,
-                        vod_name: item.title || '战报' + (i + 1),
+                        vod_id: tid + '_highlight_' + item.noteId,
+                        vod_name: '【全场集锦】' + (item.title || '集锦' + (i + 1)),
                         vod_pic: item.cover || '',
                         vod_remarks: (item.nickname || '') + ' | ' + (item.likes || 0) + '赞',
                         vod_content: item.title || ''
                     });
                 }
             }
-        } else if (tid === 'high') {
-            // 高光时刻 - highList 中所有 video 类型
-            const highList = matchInfo.highList || [];
-            for (let i = 0; i < highList.length; i++) {
-                const item = highList[i];
-                if (item.type === 'video') {
+        }
+
+        // 3. 战报
+        for (let i = 0; i < reportList.length; i++) {
+            const item = reportList[i];
+            if (item.type === 'video' && getCategory(item.title || '') !== '全场集锦') {
+                videos.push({
+                    vod_id: tid + '_report_' + item.noteId,
+                    vod_name: '【战报】' + (item.title || '战报' + (i + 1)),
+                    vod_pic: item.cover || '',
+                    vod_remarks: (item.nickname || '') + ' | ' + (item.likes || 0) + '赞',
+                    vod_content: item.title || ''
+                });
+            }
+        }
+
+        // 4. 高光时刻
+        for (let i = 0; i < highList.length; i++) {
+            const item = highList[i];
+            if (item.type === 'video' && getCategory(item.title || '') !== '全场集锦') {
+                const existing = videos.find(v => v.vod_id.indexOf(item.noteId) !== -1);
+                if (!existing) {
                     videos.push({
-                        vod_id: '4459814_high_' + item.noteId,
-                        vod_name: item.title || '高光' + (i + 1),
+                        vod_id: tid + '_high_' + item.noteId,
+                        vod_name: '【高光】' + (item.title || '高光' + (i + 1)),
                         vod_pic: item.cover || '',
                         vod_remarks: (item.nickname || '') + ' | ' + (item.likes || 0) + '赞',
                         vod_content: item.title || ''
@@ -249,11 +261,11 @@ async function category(tid, pg, filter, extend) {
 
         if (videos.length === 0) {
             videos.push({
-                vod_id: '4459814_empty_' + tid,
-                vod_name: '暂无' + tid + '内容',
+                vod_id: tid + '_empty',
+                vod_name: '暂无视频',
                 vod_pic: '',
                 vod_remarks: '',
-                vod_content: '该分类下暂无视频'
+                vod_content: '该比赛暂无视频内容'
             });
         }
 
@@ -265,22 +277,23 @@ async function category(tid, pg, filter, extend) {
 }
 
 async function detail(id) {
-    // 解析ID格式: 4459814_{category}_{noteId}
+    // 解析ID格式: {matchId}_{category}_{noteId}
     const parts = id.split('_');
-    if (parts.length < 3 || parts[0] !== '4459814') {
+    if (parts.length < 3) {
         return JSON.stringify({
             list: [{
                 vod_id: id,
                 vod_name: 'ID格式错误',
                 vod_pic: '',
                 vod_remarks: '',
-                vod_content: 'ID格式应为: 4459814_category_noteId',
+                vod_content: 'ID格式应为: matchId_category_noteId',
                 vod_play_from: '测试',
                 vod_play_url: '测试$https://www.baidu.com'
             }]
         });
     }
 
+    const matchId = parts[0];
     const category = parts[1];
     const noteId = parts[2];
 
@@ -314,7 +327,7 @@ async function detail(id) {
             vod_name: categoryNames[category] || category,
             vod_pic: '',
             vod_remarks: '720P',
-            vod_content: '分类: ' + (categoryNames[category] || category) + '\n笔记ID: ' + noteId,
+            vod_content: '比赛ID: ' + matchId + '\n笔记ID: ' + noteId,
             vod_play_from: '小红书',
             vod_play_url: (categoryNames[category] || '视频') + '$' + videoUrl
         }]
