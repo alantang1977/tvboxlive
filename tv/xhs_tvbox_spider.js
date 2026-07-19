@@ -1,202 +1,127 @@
-const host = 'https://api.dbokutv.com';
+const host = 'https://www.xiaohongshu.com';
 const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://www.duboku.tv/"
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    'Referer': 'https://www.xiaohongshu.com/'
 };
 
-function base64Encode(text) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let b64 = '';
-    for (let i = 0; i < text.length; i += 3) {
-        let n = (text.charCodeAt(i) << 16) | (text.charCodeAt(i + 1) << 8) | text.charCodeAt(i + 2);
-        b64 += chars.charAt((n >> 18) & 63)
-            + chars.charAt((n >> 12) & 63)
-            + chars.charAt((n >> 6) & 63)
-            + chars.charAt(n & 63);
-    }
-    let mod = text.length % 3;
-    return (mod ? b64.slice(0, mod - 3) + "===".substring(mod) : b64);
-}
-
-function base64Decode(str) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    str = str.replace(/=/g, '');
-    let bin = '';
-    for (let i = 0; i < str.length; i += 4) {
-        let n = (chars.indexOf(str.charAt(i)) << 18)
-            | (chars.indexOf(str.charAt(i + 1)) << 12)
-            | (chars.indexOf(str.charAt(i + 2)) << 6)
-            | chars.indexOf(str.charAt(i + 3));
-        bin += String.fromCharCode((n >> 16) & 255, (n >> 8) & 255, n & 255);
-    }
-    return bin.replace(/\0/g, '');
-}
-
-function decodeData(data) {
-    if (!data || typeof data !== 'string') return '';
-    let strippedStr = data.replace(/['"]/g, '').trim();
-    if (!strippedStr) return '';
-    let segmentLength = 10;
-    let processedBase64 = '';
-    for (let i = 0; i < strippedStr.length; i += segmentLength) {
-        let segment = strippedStr.substring(i, i + segmentLength);
-        processedBase64 += segment.split('').reverse().join('');
-    }
-    processedBase64 = processedBase64.replace(/\./g, '=');
-    try {
-        return base64Decode(processedBase64);
-    } catch (e) {
-        return '';
-    }
-}
-
-function getSignedUrl(path) {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const randomNumber = Math.floor(Math.random() * 800000001);
-    const valueA = (randomNumber + 100000000).toString();
-    const valueB = (900000000 - randomNumber).toString();
-    const combined = valueA + valueB;
-
-    let interleaved = '';
-    let minLen = Math.min(combined.length, timestamp.length);
-    for (let i = 0; i < minLen; i++) {
-        interleaved += combined[i] + timestamp[i];
-    }
-    interleaved += combined.substring(minLen) + timestamp.substring(minLen);
-
-    const ssid = base64Encode(interleaved).replace(/=/g, '.');
-
-    function randomStr(len) {
-        const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        let res = '';
-        for (let i = 0; i < len; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
-        return res;
-    }
-
-    const sign = randomStr(60);
-    const token = randomStr(38);
-    const connector = path.includes('?') ? '&' : '?';
-    return `${host}${path}${connector}sign=${sign}&token=${token}&ssid=${ssid}`;
+function extractState(html) {
+    if (html.indexOf('window.__INITIAL_STATE__') === -1) return null;
+    let match = html.match(/<script[^>]*>window\.__INITIAL_STATE__\s*=\s*({.+?})<\/script>/s);
+    if (!match) match = html.match(/window\.__INITIAL_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
+    if (!match) return null;
+    let jsonStr = match[1];
+    jsonStr = jsonStr.replace(/(?<=[:\[,\s])(undefined)(?=[\s:,\}\]])/g, 'null');
+    jsonStr = jsonStr.replace(/NaN/g, 'null');
+    try { return JSON.parse(jsonStr); } catch(e) { return null; }
 }
 
 async function init(cfg) {}
 
 async function home(filter) {
-    const classes = [
-        { type_id: '3', type_name: '综艺' },
-        { type_id: '1', type_name: '电影' },
-        { type_id: '2', type_name: '连续剧' },
-        { type_id: '4', type_name: '动漫' }
-    ];
-    return JSON.stringify({ class: classes });
+    return JSON.stringify({
+        class: [
+            { type_id: 'all', type_name: '全部比赛' },
+            { type_id: 'group', type_name: '小组赛' },
+            { type_id: 'knockout', type_name: '淘汰赛' },
+            { type_id: 'final', type_name: '决赛' }
+        ]
+    });
 }
 
 async function homeVod() {
-    const url = getSignedUrl('/home');
+    const url = host + '/worldcup26';
     const r = await req(url, { headers });
-    const json = JSON.parse(r.content);
-    let videos = [];
-    json.forEach(group => {
-        (group.VodList || []).forEach(j => {
-            videos.push({
-                vod_id: decodeData(j.DId || j.DuId),
-                vod_name: j.Name,
-                vod_pic: decodeData(j.TnId),
-                vod_remarks: j.Tag
-            });
-        });
-    });
+    if (!r.content) return JSON.stringify({ list: [] });
+
+    const state = extractState(r.content);
+    if (!state) return JSON.stringify({ list: [] });
+
+    const matches = state.worldCupMatch?.matches || [];
+    const videos = matches.map(match => ({
+        vod_id: match.matchId || '',
+        vod_name: (match.homeTeamName || '') + ' vs ' + (match.awayTeamName || ''),
+        vod_pic: match.homeTeamLogo || '',
+        vod_remarks: (match.statusDesc || '') + ' | ' + (match.homeScore || '0') + '-' + (match.awayScore || '0'),
+        vod_content: (match.roundStage || '') + ' ' + (match.matchTime || '')
+    }));
+
     return JSON.stringify({ list: videos });
 }
 
-async function category(tid, pg, filter, extend = {}) {
-    let page = pg || 1;
-    let pageStr = page.toString() === '1' ? '' : page.toString();
-    let urlPath = `/vodshow/${tid}--------${pageStr}---`;
-    const url = getSignedUrl(urlPath);
-    const r = await req(url, { headers });
-    const json = JSON.parse(r.content);
-
-    let videos = (json.VodList || []).map(i => ({
-        vod_id: decodeData(i.DId || i.DuId),
-        vod_name: i.Name,
-        vod_pic: decodeData(i.TnId),
-        vod_remarks: i.Tag
-    }));
-
-    let pageCount = page;
-    try {
-        (json.PaginationList || []).forEach(j => {
-            if (j.Type === 'StartEnd') {
-                let parts = decodeData(j.PId || j.PuId).split('-');
-                if (parts.length > 8) pageCount = parseInt(parts[8]);
-            } else if (j.Type === 'ShortPage') {
-                pageCount = parseInt(j.Name.split('/')[1]);
-            }
-        });
-    } catch (e) {}
-
-    return JSON.stringify({
-        page: parseInt(page),
-        pagecount: pageCount || parseInt(page),
-        list: videos
-    });
+async function category(tid, pg, filter, extend) {
+    return homeVod();
 }
 
 async function detail(id) {
-    const url = getSignedUrl(id);
-    const r = await req(url, { headers });
-    const data = JSON.parse(r.content);
+    const matchUrl = host + '/worldcup26/match/' + id + '?wcup_source=web_main_venue_page';
+    const r = await req(matchUrl, { headers });
+    if (!r.content) return JSON.stringify({ list: [] });
 
-    const playUrls = (data.Playlist || []).map(i => {
-        return `${i.EpisodeName}$${decodeData(i.VId)}`;
-    }).join('#');
+    const state = extractState(r.content);
+    if (!state) return JSON.stringify({ list: [] });
+
+    const matchBase = state.worldCupMatch?.matchBase || {};
+    const matchInfo = state.worldCupMatch?.matchInfo || {};
+
+    const homeTeam = matchBase.homeTeamName || '';
+    const awayTeam = matchBase.awayTeamName || '';
+    const homeScore = matchBase.homeScore || '0';
+    const awayScore = matchBase.awayScore || '0';
+
+    // 简化处理：只收集官方回放
+    const videos = [];
+    const liveInfo = matchBase.liveInfo || {};
+    if (liveInfo.replayNoteId) {
+        videos.push('官方全场回放$' + liveInfo.replayNoteId);
+    }
+
+    // reportList
+    const reportList = matchInfo.reportList || [];
+    for (let i = 0; i < reportList.length; i++) {
+        const item = reportList[i];
+        if (item.noteId && item.type === 'video') {
+            videos.push((item.title || '战报' + (i + 1)) + '$' + item.noteId);
+        }
+    }
+
+    // highList
+    const highList = matchInfo.highList || [];
+    for (let i = 0; i < highList.length; i++) {
+        const item = highList[i];
+        if (item.noteId && item.type === 'video') {
+            videos.push((item.title || '高光' + (i + 1)) + '$' + item.noteId);
+        }
+    }
 
     return JSON.stringify({
         list: [{
             vod_id: id,
-            vod_name: data.Name,
-            vod_pic: decodeData(data.TnId),
-            vod_remarks: `评分：${data.Rating}`,
-            vod_year: data.ReleaseYear,
-            vod_area: data.Region,
-            vod_actor: Array.isArray(data.Actor) ? data.Actor.join(',') : data.Actor,
-            vod_director: data.Director,
-            vod_content: data.Description,
-            vod_play_from: '独播库',
-            vod_play_url: playUrls,
-            type_name: `${data.Genre || ''},${data.Scenario || ''}`
+            vod_name: homeTeam + ' vs ' + awayTeam,
+            vod_pic: matchBase.homeTeamLogo || '',
+            vod_remarks: matchBase.statusDesc || '',
+            vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam,
+            vod_play_from: '小红书',
+            vod_play_url: videos.join('#')
         }]
     });
 }
 
-async function search(wd, quick, pg = 1) {
-    const url = getSignedUrl('/vodsearch') + `&wd=${encodeURIComponent(wd)}`;
-    const r = await req(url, { headers });
-    const json = JSON.parse(r.content);
-
-    const list = (json || []).map(i => ({
-        vod_id: decodeData(i.DId || i.DuId),
-        vod_name: i.Name,
-        vod_pic: decodeData(i.TnId),
-        vod_remarks: i.Tag
-    }));
-
-    return JSON.stringify({ page: pg, list: list });
+async function search(wd, quick, pg) {
+    return JSON.stringify({ page: pg, list: [] });
 }
 
 async function play(flag, id, flags) {
-    const url = getSignedUrl(id);
-    const r = await req(url, { headers });
-    const res = JSON.parse(r.content);
-
+    // id 是笔记ID，需要获取真实视频地址
+    // 这里简化处理，直接返回笔记ID（实际需要获取视频流）
     return JSON.stringify({
         parse: 0,
-        url: decodeData(res.HId),
+        url: id,
         header: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Origin': 'https://w.duboku.io',
-            'Referer': 'https://w.duboku.io/'
+            'User-Agent': headers['User-Agent'],
+            'Referer': 'https://www.xiaohongshu.com/',
+            'Origin': 'https://www.xiaohongshu.com'
         }
     });
 }
