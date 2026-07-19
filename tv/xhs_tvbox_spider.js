@@ -17,8 +17,8 @@ function extractState(html) {
     try { return JSON.parse(jsonStr); } catch(e) { return null; }
 }
 
-// 只提取720P视频流（减少请求时间）
-async function getNoteVideo720p(noteId, xsecToken) {
+// 从笔记页面提取封面图
+async function getNoteCover(noteId, xsecToken) {
     let noteUrl = host + '/explore/' + noteId;
     if (xsecToken) {
         noteUrl += '?xsec_token=' + encodeURIComponent(xsecToken) + '&xsec_source=pc_stab';
@@ -32,78 +32,118 @@ async function getNoteVideo720p(noteId, xsecToken) {
         if (!state) return null;
 
         const noteData = state.note?.noteDetailMap?.[noteId]?.note || {};
+
+        // 1. 优先从 imageList 提取
+        const imageList = noteData.imageList || [];
+        if (imageList.length > 0) {
+            const firstImage = imageList[0];
+            // 尝试多个字段
+            const url = firstImage.urlDefault || firstImage.url || firstImage.urlPre || null;
+            if (url) return url;
+        }
+
+        // 2. 从 video 的 consumer 提取封面
+        const video = noteData.video || {};
+        const consumer = video.consumer || {};
+        if (consumer.originVideoKey) {
+            // 视频封面通常是视频的第一帧，尝试从视频数据中提取
+            const videoPoster = video.cover || video.poster || null;
+            if (videoPoster) {
+                if (typeof videoPoster === 'string') return videoPoster;
+                if (videoPoster.urlDefault) return videoPoster.urlDefault;
+                if (videoPoster.url) return videoPoster.url;
+            }
+        }
+
+        // 3. 从 note 的 cover 字段提取
+        const cover = noteData.cover || {};
+        if (cover.urlDefault) return cover.urlDefault;
+        if (cover.url) return cover.url;
+
+        return null;
+    } catch(e) {
+        return null;
+    }
+}
+
+// 只提取720P视频流
+async function getNoteVideo720p(noteId, xsecToken) {
+    let noteUrl = host + '/explore/' + noteId;
+    if (xsecToken) {
+        noteUrl += '?xsec_token=' + encodeURIComponent(xsecToken) + '&xsec_source=pc_stab';
+    }
+
+    try {
+        const r = await req(noteUrl, { headers });
+        if (!r || !r.content) return { videoUrl: null, coverUrl: null };
+
+        const state = extractState(r.content);
+        if (!state) return { videoUrl: null, coverUrl: null };
+
+        const noteData = state.note?.noteDetailMap?.[noteId]?.note || {};
         const videoData = noteData.video || {};
 
-        // 优先从 media.stream.h264 提取720P
+        // 提取封面图
+        let coverUrl = null;
+        const imageList = noteData.imageList || [];
+        if (imageList.length > 0) {
+            coverUrl = imageList[0].urlDefault || imageList[0].url || null;
+        }
+        if (!coverUrl) {
+            const cover = noteData.cover || {};
+            coverUrl = cover.urlDefault || cover.url || null;
+        }
+        if (!coverUrl && videoData.cover) {
+            const vc = videoData.cover;
+            coverUrl = vc.urlDefault || vc.url || null;
+        }
+
+        // 提取720P视频
         const media = videoData.media || {};
         const stream = media.stream || {};
         const h264 = stream.h264 || [];
 
-        // 找最接近720P的（1280x720）
         let target720 = null;
         let minDiff = Infinity;
+        const targetPixels = 1280 * 720;
 
         for (const s of h264) {
             const w = s.width || 0;
             const h = s.height || 0;
             const pixels = w * h;
-            const targetPixels = 1280 * 720; // 921600
             const diff = Math.abs(pixels - targetPixels);
-
             if (diff < minDiff) {
                 minDiff = diff;
                 target720 = s;
             }
         }
 
+        let videoUrl = null;
         if (target720) {
-            return target720.masterUrl || (target720.backupUrls && target720.backupUrls[0]) || null;
-        }
-
-        // 如果没有720P，取第一个（通常是较低分辨率）
-        if (h264.length > 0) {
-            return h264[0].masterUrl || (h264[0].backupUrls && h264[0].backupUrls[0]) || null;
+            videoUrl = target720.masterUrl || (target720.backupUrls && target720.backupUrls[0]) || null;
+        } else if (h264.length > 0) {
+            videoUrl = h264[0].masterUrl || (h264[0].backupUrls && h264[0].backupUrls[0]) || null;
         }
 
         // 尝试 mediaV2
-        const mediaV2Str = videoData.mediaV2 || '';
-        if (typeof mediaV2Str === 'string' && mediaV2Str.length > 0) {
-            try {
-                const mediaV2 = JSON.parse(mediaV2Str);
-                if (mediaV2 && mediaV2.video && mediaV2.video.stream) {
-                    const streamV2 = mediaV2.video.stream;
-                    const h264v2 = streamV2.h264 || [];
-
-                    let target720v2 = null;
-                    let minDiffv2 = Infinity;
-
-                    for (const s of h264v2) {
-                        const w = s.width || 0;
-                        const h = s.height || 0;
-                        const pixels = w * h;
-                        const targetPixels = 1280 * 720;
-                        const diff = Math.abs(pixels - targetPixels);
-
-                        if (diff < minDiffv2) {
-                            minDiffv2 = diff;
-                            target720v2 = s;
+        if (!videoUrl) {
+            const mediaV2Str = videoData.mediaV2 || '';
+            if (typeof mediaV2Str === 'string' && mediaV2Str.length > 0) {
+                try {
+                    const mediaV2 = JSON.parse(mediaV2Str);
+                    if (mediaV2 && mediaV2.video && mediaV2.video.stream) {
+                        const h264v2 = mediaV2.video.stream.h264 || [];
+                        if (h264v2.length > 0) {
+                            videoUrl = h264v2[0].master_url || (h264v2[0].backup_urls && h264v2[0].backup_urls[0]) || null;
                         }
                     }
-
-                    if (target720v2) {
-                        return target720v2.master_url || (target720v2.backup_urls && target720v2.backup_urls[0]) || null;
-                    }
-
-                    if (h264v2.length > 0) {
-                        return h264v2[0].master_url || (h264v2[0].backup_urls && h264v2[0].backup_urls[0]) || null;
-                    }
-                }
-            } catch(e) {}
+                } catch(e) {}
+            }
         }
 
-        return null;
+        return { videoUrl, coverUrl };
     } catch(e) {
-        return null;
+        return { videoUrl: null, coverUrl: null };
     }
 }
 
@@ -117,7 +157,6 @@ async function home(filter) {
     });
 }
 
-// 优化：从比赛页面直接提取列表数据（带封面图）
 async function homeVod() {
     try {
         const url = host + '/worldcup26';
@@ -127,17 +166,16 @@ async function homeVod() {
             const state = extractState(r.content);
             if (state && state.worldCupMatch && state.worldCupMatch.matches) {
                 const matches = state.worldCupMatch.matches;
-
-                // 找到 4459814
                 const targetMatch = matches.find(m => m.matchId === '4459814');
 
                 if (targetMatch) {
+                    // 使用占位图片，因为 matchBase 可能没有直接可用的封面图
                     return JSON.stringify({
                         list: [
                             {
                                 vod_id: targetMatch.matchId || '4459814',
                                 vod_name: (targetMatch.homeTeamName || '') + ' vs ' + (targetMatch.awayTeamName || ''),
-                                vod_pic: targetMatch.homeTeamLogo || targetMatch.awayTeamLogo || '',
+                                vod_pic: 'https://via.placeholder.com/300x400?text=' + encodeURIComponent((targetMatch.homeTeamName || '') + '+' + (targetMatch.awayTeamName || '')),
                                 vod_remarks: (targetMatch.statusDesc || '') + ' | ' + (targetMatch.homeScore || '0') + '-' + (targetMatch.awayScore || '0'),
                                 vod_content: (targetMatch.roundStage || '') + ' ' + (targetMatch.matchTime || '')
                             }
@@ -148,7 +186,6 @@ async function homeVod() {
         }
     } catch(e) {}
 
-    // 兜底：返回固定数据
     return JSON.stringify({
         list: [
             {
@@ -224,18 +261,24 @@ async function detail(id) {
         const homeScore = matchBase.homeScore || '0';
         const awayScore = matchBase.awayScore || '0';
 
-        // 只提取 highList，且只取前3个（减少加载时间）
+        // 只提取 highList，最多3个
         const videos = [];
         const highList = matchInfo.highList || [];
-        const maxItems = Math.min(highList.length, 3); // 最多3个
+        const maxItems = Math.min(highList.length, 3);
+
+        // 用于封面的图片（取第一个视频的封面）
+        let detailCover = '';
 
         for (let i = 0; i < maxItems; i++) {
             const item = highList[i];
             if (item.noteId && item.type === 'video') {
-                // 只提取720P
-                const videoUrl = await getNoteVideo720p(item.noteId, item.xsecToken || '');
-                if (videoUrl) {
-                    videos.push((item.title || '集锦' + (i + 1)) + '$' + videoUrl);
+                const result = await getNoteVideo720p(item.noteId, item.xsecToken || '');
+                if (result.videoUrl) {
+                    videos.push((item.title || '集锦' + (i + 1)) + '$' + result.videoUrl);
+                    // 使用第一个成功获取的视频封面作为详情页封面
+                    if (!detailCover && result.coverUrl) {
+                        detailCover = result.coverUrl;
+                    }
                 }
             }
         }
@@ -248,7 +291,7 @@ async function detail(id) {
             list: [{
                 vod_id: id,
                 vod_name: homeTeam + ' vs ' + awayTeam,
-                vod_pic: matchBase.homeTeamLogo || '',
+                vod_pic: detailCover || 'https://via.placeholder.com/300x400?text=' + encodeURIComponent(homeTeam + '+' + awayTeam),
                 vod_remarks: matchBase.statusDesc || '',
                 vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam,
                 vod_play_from: '小红书集锦',
@@ -276,7 +319,6 @@ async function search(wd, quick, pg) {
 }
 
 async function play(flag, id, flags) {
-    // 直接播放
     return JSON.stringify({
         parse: 0,
         url: id,
