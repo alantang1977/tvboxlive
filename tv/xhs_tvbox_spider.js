@@ -250,10 +250,7 @@ var rule = {
             vod_name: homeTeam + ' vs ' + awayTeam,
             vod_pic: matchBase.homeTeamLogo || '',
             vod_remarks: matchBase.statusDesc || '',
-            vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' + 
-                        '比赛时间: ' + (matchBase.matchTime || '') + '\n' +
-                        '场地: ' + (matchBase.venue || '') + '\n' +
-                        '阶段: ' + (matchBase.roundStage || ''),
+            vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam,
             vod_play_from: '小红书',
             vod_play_url: videos.join('#')
         };
