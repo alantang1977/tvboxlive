@@ -6,6 +6,9 @@ const headers = {
     'Referer': 'https://www.xiaohongshu.com/'
 };
 
+// ========== 统一配置变量 ==========
+const FALLBACK_VIDEO_URL = 'https://my9.ltd/momo-480.mp4';
+
 // ========== 工具函数 ==========
 
 function extractState(html) {
@@ -172,7 +175,14 @@ async function getMatchById(matchId) {
     if (!matches) return null;
 
     const item = matches.find(m => m.match && m.match.matchId == matchId);
-    return item ? item.match : null;
+    if (!item) return null;
+
+    // 将 item 上的 dateLabel 合并到 match 对象中，方便 detail 使用
+    const match = item.match || {};
+    if (item.dateLabel && !match.dateLabel) {
+        match.dateLabel = item.dateLabel;
+    }
+    return match;
 }
 
 // ========== TVBOX 接口 ==========
@@ -346,7 +356,7 @@ async function detail(id) {
                 vod_remarks: '',
                 vod_content: 'ID: ' + id,
                 vod_play_from: '测试',
-                vod_play_url: '测试$https://www.baidu.com'
+                vod_play_url: '测试$' + FALLBACK_VIDEO_URL
             }]
         });
     }
@@ -379,10 +389,10 @@ async function detail(id) {
             if (url720) {
                 videos.push('官方全场回放$' + url720);
             } else {
-                videos.push('官方全场回放(暂无)$https://www.baidu.com');
+                videos.push('官方全场回放(暂无)$' + FALLBACK_VIDEO_URL);
             }
         } else {
-            videos.push('暂无回放$https://www.baidu.com');
+            videos.push('暂无回放$' + FALLBACK_VIDEO_URL);
         }
     } else if (category === 'highlight') {
         // 全场集锦 - 从 reportList 和 highList 筛选标题含"集锦"的
@@ -412,7 +422,7 @@ async function detail(id) {
         }
 
         if (videos.length === 0) {
-            videos.push('暂无集锦$https://www.baidu.com');
+            videos.push('暂无集锦$' + FALLBACK_VIDEO_URL);
         }
     } else if (category === 'report') {
         // 战报 - reportList 中所有 video
@@ -428,7 +438,7 @@ async function detail(id) {
             }
         }
         if (videos.length === 0) {
-            videos.push('暂无战报$https://my9.ltd/momo-480.mp4');
+            videos.push('暂无战报$' + FALLBACK_VIDEO_URL);
         }
     } else if (category === 'high') {
         // 高光时刻 - highList 中所有 video
@@ -444,7 +454,7 @@ async function detail(id) {
             }
         }
         if (videos.length === 0) {
-            videos.push('暂无高光$https://www.baidu.com');
+            videos.push('暂无高光$' + FALLBACK_VIDEO_URL);
         }
     }
 
