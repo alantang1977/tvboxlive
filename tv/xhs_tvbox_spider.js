@@ -299,6 +299,8 @@ async function category(tid, pg, filter, extend) {
         const awayScore = match.awayScore ?? '';
         const status = match.statusDesc || '';
         const round = match.roundStage || '';
+        const group = match.groupLabel || '';
+        const dateLabel = item.dateLabel || '';
 
         let bgPic = '';
         if (match.liveInfo && match.liveInfo.cover) {
