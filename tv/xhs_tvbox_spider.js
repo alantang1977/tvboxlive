@@ -318,7 +318,7 @@ async function category(tid, pg, filter, extend) {
             vod_id: String(matchId) + '#' + tid,
             vod_name: title,
             vod_pic: bgPic,
-            vod_remarks: (categoryNames[tid] || tid) + ' | ' + status,
+            vod_remarks: (categoryNames[tid] || tid) + ' | ' + dateLabel,
             vod_content: '分类: ' + (categoryNames[tid] || tid) + '\n' +
                         homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' +
                         '阶段: ' + round + '\n' +
