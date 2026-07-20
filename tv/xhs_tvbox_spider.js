@@ -172,7 +172,7 @@ async function getMatchById(matchId) {
     if (!matches) return null;
 
     const item = matches.find(m => m.match && m.match.matchId == matchId);
-    return item ? item.match : null;
+    return item || null;
 }
 
 // ========== TVBOX 接口 ==========
@@ -336,8 +336,8 @@ async function detail(id) {
         'high': '高光时刻'
     };
 
-    const match = await getMatchById(matchId);
-    if (!match) {
+    const item = await getMatchById(matchId);
+    if (!item || !item.match) {
         return JSON.stringify({
             list: [{
                 vod_id: id,
@@ -351,6 +351,9 @@ async function detail(id) {
         });
     }
 
+    const match = item.match;
+    const matchInfo = item.matchInfo || {};
+
     const homeTeam = match.homeTeamName || '';
     const awayTeam = match.awayTeamName || '';
     const homeScore = match.homeScore ?? '';
@@ -358,7 +361,7 @@ async function detail(id) {
     const round = match.roundStage || '';
     const status = match.statusDesc || '';
     const group = match.groupLabel || '';
-    const dateLabel = match.dateLabel || '';
+    const dateLabel = item.dateLabel || '';
 
     let bgPic = '';
     if (match.liveInfo && match.liveInfo.cover) {
@@ -369,7 +372,6 @@ async function detail(id) {
 
     // 提取真实视频
     const videos = [];
-    const matchInfo = match.matchInfo || {};
 
     if (category === 'replay') {
         // 全场回放 - 使用 replayNoteId
