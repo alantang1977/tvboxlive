@@ -10,11 +10,11 @@ const headers = {
 
 function extractState(html) {
     if (!html || html.indexOf('window.__INITIAL_STATE__') === -1) return null;
-    let match = html.match(/<script[^>]*>window/__INITIAL_STATE__	=	({.+?})</script>/s);
-    if (!match) match = html.match(/window/__INITIAL_STATE__	=	({.+?});?	</script>/s);
+    let match = html.match(/<script[^>]*>window\.__INITIAL_STATE__\s*=\s*({.+?})<\/script>/s);
+    if (!match) match = html.match(/window\.__INITIAL_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
     if (!match) return null;
     let jsonStr = match[1];
-    jsonStr = jsonStr.replace(/(?<=[:	,	])(undefined)(?=[	:,	}	])/g, 'null');
+    jsonStr = jsonStr.replace(/(?<=[:\[,\s])(undefined)(?=[\s:,\}\]])/g, 'null');
     jsonStr = jsonStr.replace(/NaN/g, 'null');
     try { return JSON.parse(jsonStr); } catch(e) { return null; }
 }
@@ -68,7 +68,7 @@ async function extractVideoStreams(noteId, xsecToken) {
             try {
                 const mediaV2 = JSON.parse(mediaV2Str);
 
-                // mediaV2.stream
+                // mediaV2.stream (直接在根级别)
                 if (mediaV2.stream) {
                     const v2Stream = mediaV2.stream;
                     for (const codec of codecs) {
@@ -175,28 +175,6 @@ async function getMatchById(matchId) {
     return item ? item.match : null;
 }
 
-// ========== 关键修复：获取比赛详情页（包含 matchInfo） ==========
-async function getMatchDetail(matchId) {
-    const matchUrl = host + '/worldcup26/match/' + matchId + '?wcup_source=web_main_venue_page';
-
-    try {
-        const r = await req(matchUrl, { headers });
-        if (!r || !r.content) return null;
-
-        const state = extractState(r.content);
-        if (!state || !state.worldCupMatch) return null;
-
-        const wcm = state.worldCupMatch;
-        return {
-            matchBase: wcm.matchBase || {},
-            matchInfo: wcm.matchInfo || {},
-            matchLive: wcm.matchLive || {}
-        };
-    } catch(e) {
-        return null;
-    }
-}
-
 // ========== TVBOX 接口 ==========
 
 async function init(cfg) {}
@@ -263,14 +241,10 @@ async function homeVod() {
         if (homeScore !== '') content += ' ' + homeScore;
         content += ' - ';
         if (awayScore !== '') content += awayScore + ' ';
-        content += awayTeam + '
-';
-        content += '阶段: ' + round + '
-';
-        if (group) content += '小组: ' + group + '
-';
-        content += '时间: ' + dateLabel + '
-';
+        content += awayTeam + '\n';
+        content += '阶段: ' + round + '\n';
+        if (group) content += '小组: ' + group + '\n';
+        content += '时间: ' + dateLabel + '\n';
         content += '状态: ' + status;
 
         list.push({
@@ -335,12 +309,9 @@ async function category(tid, pg, filter, extend) {
             vod_name: title,
             vod_pic: bgPic,
             vod_remarks: (categoryNames[tid] || tid) + ' | ' + status,
-            vod_content: '分类: ' + (categoryNames[tid] || tid) + '
-' +
-                        homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '
-' +
-                        '阶段: ' + round + '
-' +
+            vod_content: '分类: ' + (categoryNames[tid] || tid) + '\n' +
+                        homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' +
+                        '阶段: ' + round + '\n' +
                         '状态: ' + status
         });
     }
@@ -365,9 +336,8 @@ async function detail(id) {
         'high': '高光时刻'
     };
 
-    // ========== 关键修复：获取比赛详情页（包含 matchInfo） ==========
-    const detailData = await getMatchDetail(matchId);
-    if (!detailData || !detailData.matchBase) {
+    const match = await getMatchById(matchId);
+    if (!match) {
         return JSON.stringify({
             list: [{
                 vod_id: id,
@@ -381,39 +351,30 @@ async function detail(id) {
         });
     }
 
-    const matchBase = detailData.matchBase;
-    const matchInfo = detailData.matchInfo || {};
-
-    const homeTeam = matchBase.homeTeamName || '';
-    const awayTeam = matchBase.awayTeamName || '';
-    const homeScore = matchBase.homeScore ?? '';
-    const awayScore = matchBase.awayScore ?? '';
-    const round = matchBase.roundStage || '';
-    const status = matchBase.statusDesc || '';
-    const group = matchBase.groupLabel || '';
-
-    // 获取 dateLabel（从首页缓存中找）
-    let dateLabel = '';
-    const allMatches = await getAllMatches();
-    if (allMatches) {
-        const found = allMatches.find(m => m.match && m.match.matchId == matchId);
-        if (found) dateLabel = found.dateLabel || '';
-    }
+    const homeTeam = match.homeTeamName || '';
+    const awayTeam = match.awayTeamName || '';
+    const homeScore = match.homeScore ?? '';
+    const awayScore = match.awayScore ?? '';
+    const round = match.roundStage || '';
+    const status = match.statusDesc || '';
+    const group = match.groupLabel || '';
+    const dateLabel = match.dateLabel || '';
 
     let bgPic = '';
-    if (matchBase.liveInfo && matchBase.liveInfo.cover) {
-        bgPic = matchBase.liveInfo.cover;
-    } else if (matchBase.homeTeamLogo) {
-        bgPic = matchBase.homeTeamLogo;
+    if (match.liveInfo && match.liveInfo.cover) {
+        bgPic = match.liveInfo.cover;
+    } else if (match.homeTeamLogo) {
+        bgPic = match.homeTeamLogo;
     }
 
     // 提取真实视频
     const videos = [];
+    const matchInfo = match.matchInfo || {};
 
     if (category === 'replay') {
         // 全场回放 - 使用 replayNoteId
-        if (matchBase.liveInfo && matchBase.liveInfo.replayNoteId) {
-            const streams = await extractVideoStreams(matchBase.liveInfo.replayNoteId, matchBase.liveInfo.xsecToken || '');
+        if (match.liveInfo && match.liveInfo.replayNoteId) {
+            const streams = await extractVideoStreams(match.liveInfo.replayNoteId, match.liveInfo.xsecToken || '');
             const url720 = select720P(streams);
             if (url720) {
                 videos.push('官方全场回放$' + url720);
@@ -493,14 +454,10 @@ async function detail(id) {
             vod_name: homeTeam + ' vs ' + awayTeam + ' [' + (categoryNames[category] || category) + ']',
             vod_pic: bgPic,
             vod_remarks: status,
-            vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '
-' +
-                        '阶段: ' + round + '
-' +
-                        (group ? '小组: ' + group + '
-' : '') +
-                        '时间: ' + dateLabel + '
-' +
+            vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' +
+                        '阶段: ' + round + '\n' +
+                        (group ? '小组: ' + group + '\n' : '') +
+                        '时间: ' + dateLabel + '\n' +
                         '状态: ' + status,
             vod_play_from: '小红书',
             vod_play_url: videos.join('#')
