@@ -19,13 +19,141 @@ function extractState(html) {
     try { return JSON.parse(jsonStr); } catch(e) { return null; }
 }
 
-// 格式化时间戳
 function formatTime(timestamp) {
     if (!timestamp) return '';
     const date = new Date(timestamp * 1000);
     return (date.getMonth() + 1) + '月' + date.getDate() + '日 ' + 
            String(date.getHours()).padStart(2, '0') + ':' + 
            String(date.getMinutes()).padStart(2, '0');
+}
+
+// ========== 视频提取核心函数 ==========
+
+async function extractVideoStreams(noteId, xsecToken) {
+    let noteUrl = host + '/explore/' + noteId;
+    if (xsecToken) {
+        noteUrl += '?xsec_token=' + encodeURIComponent(xsecToken) + '&xsec_source=pc_stab';
+    }
+
+    try {
+        const r = await req(noteUrl, { headers });
+        if (!r || !r.content) return [];
+
+        const state = extractState(r.content);
+        if (!state) return [];
+
+        const noteData = state.note?.noteDetailMap?.[noteId]?.note || {};
+        const videoData = noteData.video || {};
+
+        let allStreams = [];
+
+        // 1. 从 media.stream 提取
+        const media = videoData.media || {};
+        const stream = media.stream || {};
+        const codecs = ['h264', 'h265', 'av1', 'h266'];
+
+        for (const codec of codecs) {
+            if (stream[codec] && Array.isArray(stream[codec])) {
+                for (const s of stream[codec]) {
+                    const url = s.masterUrl || (s.backupUrls && s.backupUrls[0]) || '';
+                    if (url) {
+                        allStreams.push({
+                            source: 'media',
+                            codec: codec,
+                            url: url,
+                            width: s.width || 0,
+                            height: s.height || 0,
+                            quality: s.qualityType || ''
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. 从 mediaV2.stream 提取
+        const mediaV2Str = videoData.mediaV2 || '';
+        if (typeof mediaV2Str === 'string' && mediaV2Str.length > 0) {
+            try {
+                const mediaV2 = JSON.parse(mediaV2Str);
+                if (mediaV2 && mediaV2.stream) {
+                    const v2Stream = mediaV2.stream;
+                    for (const codec of ['h264', 'h265', 'av1', 'h266']) {
+                        if (v2Stream[codec] && Array.isArray(v2Stream[codec])) {
+                            for (const s of v2Stream[codec]) {
+                                const url = s.master_url || (s.backup_urls && s.backup_urls[0]) || '';
+                                if (url) {
+                                    allStreams.push({
+                                        source: 'mediaV2',
+                                        codec: codec,
+                                        url: url,
+                                        width: s.width || 0,
+                                        height: s.height || 0,
+                                        quality: s.quality_type || ''
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // 从 mediaV2.video.opaque1 提取投屏流
+                    if (mediaV2.video && mediaV2.video.opaque1) {
+                        const opaque1 = mediaV2.video.opaque1;
+                        for (const key of ['hd_screencast_stream', 'default_screencast_stream']) {
+                            if (opaque1[key] && typeof opaque1[key] === 'string') {
+                                allStreams.push({
+                                    source: 'mediaV2.opaque1',
+                                    codec: 'unknown',
+                                    url: opaque1[key],
+                                    width: 0,
+                                    height: 0,
+                                    quality: key
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch(e) {}
+        }
+
+        // 过滤有效URL
+        allStreams = allStreams.filter(s => s.url && s.url.indexOf('http') === 0);
+
+        // 去重
+        const seen = new Set();
+        const unique = [];
+        for (const s of allStreams) {
+            const base = s.url.split('?')[0];
+            if (!seen.has(base)) {
+                seen.add(base);
+                unique.push(s);
+            }
+        }
+
+        return unique;
+
+    } catch(e) {
+        return [];
+    }
+}
+
+// 筛选720P视频
+function select720P(streams) {
+    if (!streams || streams.length === 0) return null;
+
+    // 1. 优先精确匹配 1280x720
+    const exact720 = streams.find(s => s.width === 1280 && s.height === 720);
+    if (exact720) return exact720.url;
+
+    // 2. 找接近720P的 (高度 600-900)
+    const near720 = streams.filter(s => s.height >= 600 && s.height <= 900);
+    if (near720.length > 0) {
+        near720.sort((a, b) => b.height - a.height);
+        return near720[0].url;
+    }
+
+    // 3. 返回最低清晰度（避免加载大文件）
+    const sorted = [...streams].sort((a, b) => (a.width * a.height) - (b.width * b.height));
+    return sorted[0].url;
 }
 
 // ========== 数据缓存 ==========
@@ -45,7 +173,6 @@ async function getAllMatches() {
     return matches;
 }
 
-// 获取单场比赛数据
 async function getMatchById(matchId) {
     const matches = await getAllMatches();
     if (!matches) return null;
@@ -59,7 +186,6 @@ async function getMatchById(matchId) {
 async function init(cfg) {}
 
 async function home(filter) {
-    // 四个固定一级菜单
     return JSON.stringify({
         class: [
             { type_id: 'replay', type_name: '全场回放' },
@@ -71,14 +197,12 @@ async function home(filter) {
 }
 
 async function homeVod() {
-    // 首页直接显示所有比赛卡片
     const matches = await getAllMatches();
     if (!matches || matches.length === 0) {
         return JSON.stringify({ list: [] });
     }
 
     const list = [];
-
     for (const item of matches) {
         const match = item.match;
         if (!match) continue;
@@ -91,10 +215,8 @@ async function homeVod() {
         const status = match.statusDesc || '';
         const round = match.roundStage || '';
         const group = match.groupLabel || '';
-        const matchTime = match.matchTime || 0;
         const dateLabel = item.dateLabel || '';
 
-        // 背景图优先级: liveInfo.cover > homeTeamLogo > awayTeamLogo
         let bgPic = '';
         if (match.liveInfo && match.liveInfo.cover) {
             bgPic = match.liveInfo.cover;
@@ -104,19 +226,16 @@ async function homeVod() {
             bgPic = match.awayTeamLogo;
         }
 
-        // 构建标题
         let title = homeTeam + ' vs ' + awayTeam;
         if (homeScore !== '' && awayScore !== '') {
             title += ' ' + homeScore + '-' + awayScore;
         }
 
-        // 构建副标题
         let subTitle = round;
         if (group) subTitle += ' ' + group;
         if (dateLabel) subTitle += ' | ' + dateLabel;
         if (status) subTitle += ' | ' + status;
 
-        // 构建内容
         let content = homeTeam;
         if (homeScore !== '') content += ' ' + homeScore;
         content += ' - ';
@@ -124,7 +243,7 @@ async function homeVod() {
         content += awayTeam + '\n';
         content += '阶段: ' + round + '\n';
         if (group) content += '小组: ' + group + '\n';
-        content += '时间: ' + (dateLabel || formatTime(matchTime)) + '\n';
+        content += '时间: ' + dateLabel + '\n';
         content += '状态: ' + status;
 
         list.push({
@@ -140,8 +259,6 @@ async function homeVod() {
 }
 
 async function category(tid, pg, filter, extend) {
-    // tid 是分类ID: replay, highlight, report, high
-    // 返回所有比赛，但每个比赛标记为特定分类
     const matches = await getAllMatches();
     if (!matches || matches.length === 0) {
         return JSON.stringify({ list: [] });
@@ -181,7 +298,6 @@ async function category(tid, pg, filter, extend) {
             title += ' ' + homeScore + '-' + awayScore;
         }
 
-        // ID编码: matchId#category
         list.push({
             vod_id: String(matchId) + '#' + tid,
             vod_name: title,
@@ -198,7 +314,6 @@ async function category(tid, pg, filter, extend) {
 }
 
 async function detail(id) {
-    // 解析ID: matchId#category 或 纯 matchId
     let matchId = id;
     let category = 'replay';
 
@@ -215,7 +330,6 @@ async function detail(id) {
         'high': '高光时刻'
     };
 
-    // 获取比赛数据
     const match = await getMatchById(matchId);
     if (!match) {
         return JSON.stringify({
@@ -240,7 +354,6 @@ async function detail(id) {
     const group = match.groupLabel || '';
     const dateLabel = match.dateLabel || '';
 
-    // 获取背景图
     let bgPic = '';
     if (match.liveInfo && match.liveInfo.cover) {
         bgPic = match.liveInfo.cover;
@@ -248,25 +361,83 @@ async function detail(id) {
         bgPic = match.homeTeamLogo;
     }
 
-    // 构建占位视频项（框架测试，不提取真实视频）
+    // 提取真实视频
     const videos = [];
+    const matchInfo = match.matchInfo || {};
 
     if (category === 'replay') {
         // 全场回放 - 使用 replayNoteId
         if (match.liveInfo && match.liveInfo.replayNoteId) {
-            videos.push('官方全场回放$note://' + match.liveInfo.replayNoteId);
+            const streams = await extractVideoStreams(match.liveInfo.replayNoteId, match.liveInfo.xsecToken || '');
+            const url720 = select720P(streams);
+            if (url720) {
+                videos.push('官方全场回放$' + url720);
+            } else {
+                videos.push('官方全场回放(暂无)$https://www.baidu.com');
+            }
         } else {
             videos.push('暂无回放$https://www.baidu.com');
         }
     } else if (category === 'highlight') {
-        videos.push('全场集锦(框架测试)$https://www.baidu.com');
+        // 全场集锦 - 从 reportList 和 highList 筛选标题含"集锦"的
+        const allItems = [];
+        const reportList = matchInfo.reportList || [];
+        for (const item of reportList) {
+            if (item.type === 'video' && item.title && (item.title.indexOf('集锦') !== -1 || item.title.indexOf('高光') !== -1)) {
+                allItems.push(item);
+            }
+        }
+        const highList = matchInfo.highList || [];
+        for (const item of highList) {
+            if (item.type === 'video' && item.title && (item.title.indexOf('集锦') !== -1 || item.title.indexOf('高光') !== -1)) {
+                allItems.push(item);
+            }
+        }
+
+        for (let i = 0; i < allItems.length; i++) {
+            const item = allItems[i];
+            const streams = await extractVideoStreams(item.noteId, item.xsecToken || '');
+            const url720 = select720P(streams);
+            if (url720) {
+                videos.push((item.title || '集锦' + (i + 1)) + '$' + url720);
+            }
+        }
+
+        if (videos.length === 0) {
+            videos.push('暂无集锦$https://www.baidu.com');
+        }
     } else if (category === 'report') {
-        videos.push('战报视频1(框架测试)$https://www.baidu.com');
-        videos.push('战报视频2(框架测试)$https://www.baidu.com');
+        // 战报 - reportList 中所有 video
+        const reportList = matchInfo.reportList || [];
+        for (let i = 0; i < reportList.length; i++) {
+            const item = reportList[i];
+            if (item.type === 'video' && item.noteId) {
+                const streams = await extractVideoStreams(item.noteId, item.xsecToken || '');
+                const url720 = select720P(streams);
+                if (url720) {
+                    videos.push((item.title || '战报' + (i + 1)) + '$' + url720);
+                }
+            }
+        }
+        if (videos.length === 0) {
+            videos.push('暂无战报$https://www.baidu.com');
+        }
     } else if (category === 'high') {
-        videos.push('高光时刻1(框架测试)$https://www.baidu.com');
-        videos.push('高光时刻2(框架测试)$https://www.baidu.com');
-        videos.push('高光时刻3(框架测试)$https://www.baidu.com');
+        // 高光时刻 - highList 中所有 video
+        const highList = matchInfo.highList || [];
+        for (let i = 0; i < highList.length; i++) {
+            const item = highList[i];
+            if (item.type === 'video' && item.noteId) {
+                const streams = await extractVideoStreams(item.noteId, item.xsecToken || '');
+                const url720 = select720P(streams);
+                if (url720) {
+                    videos.push((item.title || '高光' + (i + 1)) + '$' + url720);
+                }
+            }
+        }
+        if (videos.length === 0) {
+            videos.push('暂无高光$https://www.baidu.com');
+        }
     }
 
     return JSON.stringify({
@@ -279,8 +450,7 @@ async function detail(id) {
                         '阶段: ' + round + '\n' +
                         (group ? '小组: ' + group + '\n' : '') +
                         '时间: ' + dateLabel + '\n' +
-                        '状态: ' + status + '\n' +
-                        '\n[框架测试模式 - 点击播放将提取真实视频]',
+                        '状态: ' + status,
             vod_play_from: '小红书',
             vod_play_url: videos.join('#')
         }]
@@ -292,36 +462,14 @@ async function search(wd, quick, pg) {
 }
 
 async function play(flag, id, flags) {
-    // 如果是笔记ID，返回笔记页面URL
-    if (id && id.indexOf('note://') === 0) {
-        const noteId = id.replace('note://', '');
-        return JSON.stringify({
-            parse: 1,
-            url: host + '/explore/' + noteId,
-            header: {
-                'User-Agent': headers['User-Agent'],
-                'Referer': 'https://www.xiaohongshu.com/',
-                'Origin': 'https://www.xiaohongshu.com'
-            }
-        });
-    }
-
-    // 如果是真实URL，直接播放
-    if (id && id.indexOf('http') === 0) {
-        return JSON.stringify({
-            parse: 0,
-            url: id,
-            header: {
-                'User-Agent': headers['User-Agent'],
-                'Referer': 'https://www.xiaohongshu.com/',
-                'Origin': 'https://www.xiaohongshu.com'
-            }
-        });
-    }
-
     return JSON.stringify({
         parse: 0,
-        url: id
+        url: id,
+        header: {
+            'User-Agent': headers['User-Agent'],
+            'Referer': 'https://www.xiaohongshu.com/',
+            'Origin': 'https://www.xiaohongshu.com'
+        }
     });
 }
 
