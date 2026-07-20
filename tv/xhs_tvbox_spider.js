@@ -225,6 +225,7 @@ async function homeVod() {
         const awayScore = match.awayScore ?? '';
         const status = match.statusDesc || '';
         const round = match.roundStage || '';
+        const dateLabel = item.dateLabel || '';
         const group = match.groupLabel || '';
         const dateLabel = item.dateLabel || '';
 
@@ -299,6 +300,7 @@ async function category(tid, pg, filter, extend) {
         const awayScore = match.awayScore ?? '';
         const status = match.statusDesc || '';
         const round = match.roundStage || '';
+        const dateLabel = item.dateLabel || '';
 
         let bgPic = '';
         if (match.liveInfo && match.liveInfo.cover) {
@@ -318,7 +320,7 @@ async function category(tid, pg, filter, extend) {
             vod_id: String(matchId) + '#' + tid,
             vod_name: title,
             vod_pic: bgPic,
-            vod_remarks: (categoryNames[tid] || tid) + ' | ' + status,
+            vod_remarks: (dateLabel || (categoryNames[tid] || tid)) + ' | ' + status,
             vod_content: '分类: ' + (categoryNames[tid] || tid) + '\n' +
                         homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' +
                         '阶段: ' + round + '\n' +
