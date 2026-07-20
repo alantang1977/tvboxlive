@@ -428,7 +428,7 @@ async function detail(id) {
             }
         }
         if (videos.length === 0) {
-            videos.push('暂无战报$https://www.baidu.com');
+            videos.push('暂无战报$https://my9.ltd/momo-480.mp4');
         }
     } else if (category === 'high') {
         // 高光时刻 - highList 中所有 video
@@ -457,7 +457,7 @@ async function detail(id) {
             vod_content: homeTeam + ' ' + homeScore + ' - ' + awayScore + ' ' + awayTeam + '\n' +
                         '阶段: ' + round + '\n' +
                         (group ? '小组: ' + group + '\n' : '') +
-                        '时间2: ' + dateLabel + '\n' +
+                        '时间: ' + dateLabel + '\n' +
                         '状态: ' + status,
             vod_play_from: '小红书',
             vod_play_url: videos.join('#')
