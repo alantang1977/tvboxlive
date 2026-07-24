@@ -25,7 +25,7 @@
 - **JSON**：源相对稳定，用于WEBVIEW项目，适合追求稳定源的朋友
 - **仓库文件加速 组播线路：** https://raw.githubusercontent.com/jn950/live/main/tv/pllive.txt
 - **文件加速 酒店咪咕线路：** https://raw.githubusercontent.com/jn950/live/main/tv/holive.m3u
-- **文件加速 央视屏代理线路：** https://raw.githubusercontent.com/jn950/live/main/tv/ysp1.m3u
+- **文件加速 TVBox线路：** https://gh-proxy.org/https://raw.githubusercontent.com/jn950/live/main/tv/co07
 - **文件加速 WEBVIEW线路：** https://raw.githubusercontent.com/jn950/live/main/web/webyang.json
 
 ----
