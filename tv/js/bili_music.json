@@ -25,6 +25,10 @@
             "type_id": "DJ歌曲超清"
         },
         {
+            "type_name": "AI",
+            "type_id": "AI编程"
+        },
+        {
             "type_name": "网红翻唱",
             "type_id": "网红翻唱歌曲超清"
         },
